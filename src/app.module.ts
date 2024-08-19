@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -7,7 +6,7 @@ import { CoffeeModule } from './coffee/coffees.module';
 import { CommonModule } from './common/common.module';
 import appConfig from './config/app.config';
 import validationConfig from './config/validation.config';
-import dbConfig from './config/db.config';
+import { MongooseModule } from '@nestjs/mongoose';
 
 @Module({
   imports: [
@@ -17,9 +16,7 @@ import dbConfig from './config/db.config';
       envFilePath: '.env',
       validationSchema: validationConfig,
     }),
-    TypeOrmModule.forRootAsync({
-      useFactory: dbConfig,
-    }),
+    MongooseModule.forRoot(process.env.MONGOOSE_URI),
     CoffeeModule,
     CommonModule,
   ],

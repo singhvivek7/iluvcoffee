@@ -1,116 +1,128 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Coffee } from './entities/coffee.entity';
+import { Connection, Model } from 'mongoose';
 import { CreateCoffeeDto } from './dto/create-coffee.dto';
-import { Flavor } from './entities/flavor.entity';
 import { UpdateCoffeeDto } from './dto/update-coffee.dto';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
-import { Event } from '../events/entities/event.entity';
+import { PaginationQueryDto } from 'src/common/dto/pagination-query.dto';
+import { Event } from 'src/events/entities/event.entity';
 
 @Injectable()
 export class CoffeesService {
   constructor(
-    @InjectRepository(Coffee)
-    private readonly coffeeRepository: Repository<Coffee>,
-    @InjectRepository(Flavor)
-    private readonly flavorRepository: Repository<Flavor>,
-    private readonly connection: DataSource,
+    @InjectModel(Coffee.name) private readonly coffeeModel: Model<Coffee>,
+    @InjectModel(Event.name) private readonly eventModel: Model<Event>,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
-  findAll(paginationQuery: PaginationQueryDto) {
-    const { limit, offset } = paginationQuery;
+  findAll(paginationQueryDto: PaginationQueryDto): Promise<Coffee[]> {
+    const { limit = 10, offset = 0 } = paginationQueryDto;
 
-    return this.coffeeRepository.find({
-      relations: ['flavors'],
-      skip: offset,
-      take: limit,
-    });
+    return this.coffeeModel.find().skip(offset).limit(limit).exec();
   }
 
-  async findOne(id: number) {
-    const coffee = await this.coffeeRepository.findOne({
-      where: { id },
-      relations: ['flavors'],
-    });
-
+  async findOne(id: string): Promise<Coffee> {
+    const coffee = await this.coffeeModel.findById(id).exec();
     if (!coffee) {
       throw new NotFoundException(`Coffee #${id} not found`);
     }
-
     return coffee;
   }
 
-  async create(createCoffeeDto: CreateCoffeeDto) {
-    const flavors = await Promise.all(
-      createCoffeeDto.flavors.map((name) => this.preloadFlavorByName(name)),
-    );
-
-    const coffee = this.coffeeRepository.create({
-      ...createCoffeeDto,
-      flavors,
-    });
-    return this.coffeeRepository.save(coffee);
+  create(createCoffeeDto: CreateCoffeeDto): Promise<Coffee> {
+    const createdCoffee = new this.coffeeModel(createCoffeeDto);
+    return createdCoffee.save();
   }
 
-  async update(id: number, updateCoffeeDto: UpdateCoffeeDto) {
-    const flavors =
-      updateCoffeeDto.flavors &&
-      (await Promise.all(
-        updateCoffeeDto.flavors.map((name) => this.preloadFlavorByName(name)),
-      ));
-
-    const coffee = await this.coffeeRepository.preload({
-      id,
-      ...updateCoffeeDto,
-      flavors,
-    });
-
-    if (!coffee) {
+  async update(id: string, updateCoffeeDto: UpdateCoffeeDto): Promise<Coffee> {
+    const updatedCoffee = await this.coffeeModel
+      .findByIdAndUpdate(id, updateCoffeeDto, { new: true })
+      .exec();
+    if (!updatedCoffee) {
       throw new NotFoundException(`Coffee #${id} not found`);
     }
-    return this.coffeeRepository.save(coffee);
+    return updatedCoffee;
   }
 
-  async remove(id: number) {
-    const coffee = await this.findOne(id);
-    return this.coffeeRepository.remove(coffee);
-  }
-
-  async preloadFlavorByName(name: string) {
-    const flavors = await this.flavorRepository.findOne({
-      where: { name },
-    });
-
-    if (flavors) {
-      return flavors;
+  async remove(id: string): Promise<Coffee> {
+    const deletedCoffee = await this.coffeeModel.findByIdAndDelete(id).exec();
+    if (!deletedCoffee) {
+      throw new NotFoundException(`Coffee #${id} not found`);
     }
-
-    return this.flavorRepository.create({ name });
+    return deletedCoffee;
   }
 
-  async recommendCoffee(coffee: Coffee) {
-    const queryRunner = this.connection.createQueryRunner();
+  async seedCoffees(): Promise<Coffee[]> {
+    const coffees = [
+      {
+        name: 'Colombian',
+        brand: 'Buddy Brew',
+        flavors: ['chocolate', 'vanilla'],
+      },
+      {
+        name: 'Latte',
+        brand: 'Starbucks',
+        flavors: ['chocolate', 'vanilla'],
+      },
+      {
+        name: 'Capuccino',
+        brand: 'Starbucks',
+        flavors: ['chocolate', 'vanilla'],
+      },
+      {
+        name: 'Mocha',
+        brand: 'Starbucks',
+        flavors: ['chocolate', 'vanilla'],
+      },
+      {
+        name: 'Espresso',
+        brand: 'Starbucks',
+        flavors: ['chocolate', 'vanilla'],
+      },
+      {
+        name: 'Cappuccino',
+        brand: 'Starbucks',
+        flavors: ['chocolate', 'vanilla'],
+      },
+      {
+        name: 'Mocha',
+        brand: 'Starbucks',
+        flavors: ['chocolate', 'vanilla'],
+      },
+    ];
+    return this.coffeeModel.insertMany(coffees);
+  }
 
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+  async deleteAll(): Promise<string> {
+    const deleted = await this.coffeeModel.deleteMany().exec();
+
+    return `Deleted all #${deleted.deletedCount} coffees`;
+  }
+
+  async recommendCoffees(id: string): Promise<void> {
+    const coffee = await this.findOne(id);
+
+    const session = await this.connection.startSession();
+    session.startTransaction();
 
     try {
       coffee.recommendations++;
 
-      const recommendEvent = new Event();
-      recommendEvent.name = 'recommend_coffee';
-      recommendEvent.type = 'coffee';
-      recommendEvent.payload = { coffeeId: coffee.id };
+      const recommendedEvent = new this.eventModel({
+        name: 'coffee-recommendation',
+        type: 'coffee-recommendation',
+        payload: { coffeeId: coffee.id },
+      });
 
-      await queryRunner.manager.save(coffee);
-      await queryRunner.manager.save(recommendEvent);
+      await recommendedEvent.save({ session });
+      await coffee.save({ session });
 
-      await queryRunner.commitTransaction();
+      await session.commitTransaction();
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      await session.abortTransaction();
+      throw error;
     } finally {
-      await queryRunner.release();
+      session.endSession();
     }
   }
 }

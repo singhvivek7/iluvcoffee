@@ -1,13 +1,20 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Event } from '../events/entities/event.entity';
 import { CoffeesService } from './coffees.service';
 import { CoffeesController } from './coffees.controller';
-import { Coffee } from './entities/coffee.entity';
-import { Flavor } from './entities/flavor.entity';
+import { MongooseModule } from '@nestjs/mongoose';
+import { Coffee, CoffeeSchema } from './entities/coffee.entity';
+import { Event, EventSchema } from 'src/events/entities/event.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Coffee, Flavor, Event])],
+  imports: [
+    MongooseModule.forFeature([
+      { name: Coffee.name, schema: CoffeeSchema },
+      {
+        name: Event.name,
+        schema: EventSchema,
+      },
+    ]),
+  ],
   providers: [CoffeesService],
   controllers: [CoffeesController],
 })
